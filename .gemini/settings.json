@@ -6,7 +6,7 @@
         "-y",
         "@arizeai/phoenix-mcp@latest",
         "--baseUrl",
-        "https://app.phoenix.arize.com/s/your-space",
+        "https://app.phoenix.arize.com/s/priyanshmagic2",
         "--apiKey",
         ""
       ]

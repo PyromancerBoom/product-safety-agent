@@ -29,12 +29,12 @@ from google.adk.runners import InMemoryRunner
 from google.genai import types
 
 from instrumentation import setup_tracing
-from shopping_demo.agent import root_agent
+from shopsafe.agent import root_agent
 
 
 async def run_turn(user_text: str) -> None:
     setup_tracing()
-    app_name, user_id, session_id = "hackathon_shopping", "local_user", secrets.token_hex(8)
+    app_name, user_id, session_id = "shopsafe", "local_user", secrets.token_hex(8)
     runner = InMemoryRunner(agent=root_agent, app_name=app_name)
     await runner.session_service.create_session(
         app_name=app_name, user_id=user_id, session_id=session_id
