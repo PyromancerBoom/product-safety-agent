@@ -39,12 +39,22 @@ async def run_turn(user_text: str) -> None:
     await runner.session_service.create_session(
         app_name=app_name, user_id=user_id, session_id=session_id
     )
-    async for _ in runner.run_async(
+    async for event in runner.run_async(
         user_id=user_id,
         session_id=session_id,
         new_message=types.Content(role="user", parts=[types.Part(text=user_text)]),
     ):
-        pass
+        for part in (event.content.parts if event.content else []) or []:
+            if getattr(part, "text", None):
+                print(part.text, end="", flush=True)
+            if getattr(part, "function_call", None):
+                fc = part.function_call
+                print(f"\n[tool call] {fc.name}({dict(fc.args or {})})", flush=True)
+            if getattr(part, "function_response", None):
+                fr = part.function_response
+                resp = str(fr.response)
+                print(f"\n[tool result] {fr.name} -> {resp[:300]}{'...' if len(resp) > 300 else ''}", flush=True)
+    print()
 
 
 def main() -> None:
