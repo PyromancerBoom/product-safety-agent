@@ -61,7 +61,7 @@ def main() -> None:
     msg = (
         sys.argv[1]
         if len(sys.argv) > 1
-        else "Help me find a floral summer dress under $50 and buy size M."
+        else "What are the safety concerns with retinol in skincare?"
     )
     asyncio.run(run_turn(msg))
 
