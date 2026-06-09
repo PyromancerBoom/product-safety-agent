@@ -12,43 +12,56 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Live web search via Exa, exposed as an ADK FunctionTool."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+
+from exa_py import Exa
 from google.adk.tools import ToolContext
 
-from shopping_demo.mini_webshop import get_webshop_env
+_NUM_RESULTS = 5
+_SNIPPET_CHARS = 800
 
 
-async def search(keywords: str, tool_context: ToolContext) -> str:
-    """Search for keywords in the webshop.
+def _format_results(results) -> str:
+    blocks = []
+    for i, r in enumerate(results, start=1):
+        text = (getattr(r, "text", "") or "").strip().replace("\n", " ")
+        if len(text) > _SNIPPET_CHARS:
+            text = text[:_SNIPPET_CHARS] + "..."
+        blocks.append(
+            f"[{i}] {getattr(r, 'title', '') or '(untitled)'}\n"
+            f"URL: {getattr(r, 'url', '') or '(no url)'}\n"
+            f"Published: {getattr(r, 'published_date', None) or 'unknown'}\n"
+            f"Snippet: {text or '(no text extracted)'}"
+        )
+    return "\n\n".join(blocks) if blocks else "No results found."
+
+
+async def search(query: str, tool_context: ToolContext) -> str:
+    """Search the live web for current information.
 
     Args:
-      keywords: The keywords to search for.
-      tool_context: ADK tool context (artifacts optional).
+      query: A natural-language search query.
+      tool_context: ADK tool context.
 
     Returns:
-      Text observation of the search results page.
+      Up to five results, each with title, source URL, publish date, and a text
+      snippet. Cite the URL for any claim drawn from a result.
     """
-    webshop_env = get_webshop_env()
-    action_string = f"search[{keywords}]"
-    webshop_env.server.assigned_instruction_text = f"Find me {keywords}."
-    webshop_env.step(action_string)
+    api_key = (os.environ.get("EXA_API_KEY") or "").strip()
+    if not api_key:
+        return "Search unavailable: EXA_API_KEY is not set in the environment."
 
-    ob = webshop_env.observation
-    idx = ob.find("Back to Search")
-    if idx >= 0:
-        ob = ob[idx:]
-
-    # Optional artifact (skipped if unsupported in minimal runs)
-    try:
-        from google.genai import types
-
-        if webshop_env.state.get("html"):
-            await tool_context.save_artifact(
-                "html",
-                types.Part.from_uri(
-                    file_uri=webshop_env.state["html"], mime_type="text/html"
-                ),
-            )
-    except (ValueError, ImportError, TypeError):
-        pass
-
-    return ob
+    exa = Exa(api_key=api_key)
+    response = await asyncio.to_thread(
+        exa.search_and_contents,
+        query,
+        type="auto",
+        num_results=_NUM_RESULTS,
+        text=True,
+    )
+    return _format_results(getattr(response, "results", []) or [])

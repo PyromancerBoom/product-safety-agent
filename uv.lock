@@ -740,6 +740,24 @@ wheels = [
 ]
 
 [[package]]
+name = "exa-py"
+version = "2.13.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpcore" },
+    { name = "httpx" },
+    { name = "openai" },
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "requests" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/43/fb/30ab159fd06d9e8b87059a456882e06db209abd232bd103c7812d41377d2/exa_py-2.13.2.tar.gz", hash = "sha256:f0391afbf82026aadf2717b41183a3abe3d6bbb06ab20cb21c47a62b0fcdc80c", size = 65423, upload-time = "2026-06-08T23:44:57.793Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/36/df/59806a66a68d6f12048e436787733ab64804216d1503b8108ad942571583/exa_py-2.13.2-py3-none-any.whl", hash = "sha256:1e3757cb23ea7cb94fe76e4c003069a85bc3d47ff91191166a3d6ce286116e97", size = 84810, upload-time = "2026-06-08T23:44:56.393Z" },
+]
+
+[[package]]
 name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -918,6 +936,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "arize-phoenix" },
+    { name = "exa-py" },
     { name = "google-adk" },
     { name = "google-genai" },
     { name = "openinference-instrumentation-google-adk" },
@@ -929,6 +948,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "arize-phoenix", specifier = ">=7.0" },
+    { name = "exa-py", specifier = ">=1.0" },
     { name = "google-adk", specifier = ">=1.32.0" },
     { name = "google-genai", specifier = ">=1.9.0" },
     { name = "openinference-instrumentation-google-adk", specifier = ">=0.1.11" },

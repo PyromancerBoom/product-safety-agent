@@ -21,7 +21,6 @@ from dotenv import load_dotenv
 
 from instrumentation import setup_tracing
 from shopping_demo.prompt import personalized_shopping_agent_instruction
-from shopping_demo.tools.click import click
 from shopping_demo.tools.search import search
 
 # Ensure ADK CLI runs (`adk run shopping_demo`) load local env and tracing.
@@ -36,6 +35,5 @@ root_agent = Agent(
     instruction=personalized_shopping_agent_instruction,
     tools=[
         FunctionTool(func=search),
-        FunctionTool(func=click),
     ],
 )
