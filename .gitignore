@@ -13,3 +13,8 @@ dist/
 .adk/
 agent/**/.adk/
 .claude/
+AGENTS.md
+CLAUDE.md
+Hackathon.md
+build_plan.md
+build-plan.md
