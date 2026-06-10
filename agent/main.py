@@ -23,40 +23,75 @@ from shopsafe.models import SafetyVerdict
 
 async def run_turn(user_text: str) -> None:
     setup_tracing()
-    app_name, user_id, session_id = "shopsafe", "local_user", secrets.token_hex(8)
-    runner = InMemoryRunner(agent=root_agent, app_name=app_name)
-    await runner.session_service.create_session(
-        app_name=app_name, user_id=user_id, session_id=session_id
+    
+    from shopsafe import (
+        AgentSessionState,
+        session_scope,
+        run_safety_check_pass,
+        run_groundedness_audit,
     )
-    full_response = ""
-    try:
-        async for event in runner.run_async(
-            user_id=user_id,
-            session_id=session_id,
-            new_message=types.Content(role="user", parts=[types.Part(text=user_text)]),
-        ):
-            for part in (event.content.parts if event.content else []) or []:
-                if getattr(part, "text", None):
-                    text_chunk = part.text
-                    full_response += text_chunk
-                    print(text_chunk, end="", flush=True)
-                if getattr(part, "function_call", None):
-                    fc = part.function_call
-                    print(f"\n[tool call] {fc.name}({dict(fc.args or {})})", flush=True)
-                if getattr(part, "function_response", None):
-                    fr = part.function_response
-                    resp = str(fr.response)
-                    print(f"\n[tool result] {fr.name} -> {resp[:300]}{'...' if len(resp) > 300 else ''}", flush=True)
-    except Exception as loop_err:
-        print(f"\n[loop error] {loop_err}", flush=True)
-    print()
-    print("\n--- Schema Validation ---")
-    try:
-        clean_json = full_response.strip().removeprefix("```json").removesuffix("```").strip()
-        verdict = SafetyVerdict.model_validate_json(clean_json)
-        print(f"[SUCCESS] Response matches SafetyVerdict schema for product '{verdict.product_name}'")
-    except Exception as e:
-        print(f"[ERROR] Schema Validation Failed: {e}")
+
+    session = AgentSessionState(user_query=user_text)
+    
+    async with session_scope(session):
+        print(f"\n=========================================")
+        print(f"[PASS 1] STARTING SAFETY CHECK FOR: '{user_text}'")
+        print(f"=========================================")
+        try:
+            pass1_verdict = await run_safety_check_pass(user_text)
+            print("\n--- Pass 1 Verdict Generated ---")
+            print(f"Overall Verdict: {pass1_verdict.overall_verdict.upper()}")
+            print(f"Reason: {pass1_verdict.overall_reason}")
+            for ing in pass1_verdict.ingredients:
+                print(f"  - {ing.name}: {ing.verdict.upper()} ({ing.reason})")
+        except Exception as e:
+            print(f"\n[Pass 1 Error] {e}")
+            return
+
+        print(f"\n=========================================")
+        print(f"[AUDIT] STARTING GROUNDEDNESS & COMPLIANCE INSPECTOR")
+        print(f"=========================================")
+        try:
+            audit = await run_groundedness_audit()
+            print(f"Groundedness Score: {audit.groundedness_score:.2f}/1.00")
+            print(f"Authority Score:    {audit.authority_score:.2f}/1.00")
+            print(f"Tone Safety Score:  {audit.tone_safety_score:.2f}/1.00")
+            print(f"Status:             {'APPROVED' if audit.is_approved else 'REJECTED'}")
+        except Exception as e:
+            print(f"\n[Audit Error] {e}")
+            return
+
+        final_verdict = pass1_verdict
+
+        if not audit.is_approved and audit.critique:
+            print(f"\n=========================================")
+            print(f"[CRITIQUE] REFINEMENT INSTRUCTIONS RECEIVED")
+            print(f"=========================================")
+            print(audit.critique)
+
+            print(f"\n=========================================")
+            print(f"[PASS 2] STARTING REFINED SEARCH & FIX")
+            print(f"=========================================")
+            try:
+                pass2_verdict = await run_safety_check_pass(user_text, critique=audit.critique)
+                print("\n--- Pass 2 (Final) Verdict Generated ---")
+                print(f"Overall Verdict: {pass2_verdict.overall_verdict.upper()}")
+                print(f"Reason: {pass2_verdict.overall_reason}")
+                for ing in pass2_verdict.ingredients:
+                    print(f"  - {ing.name}: {ing.verdict.upper()} ({ing.reason})")
+                final_verdict = pass2_verdict
+            except Exception as e:
+                print(f"\n[Pass 2 Error] {e}")
+                print("Falling back to Pass 1 verdict.")
+
+        print(f"\n=========================================")
+        print(f"[REPORT] FINAL SAFETY REPORT")
+        print(f"=========================================")
+        print(f"Product:        {final_verdict.product_name}")
+        print(f"Overall Rating: {final_verdict.overall_verdict.upper()}")
+        print(f"Summary Reason: {final_verdict.overall_reason}")
+        print(f"Citations Found: {sum(len(ing.claims) for ing in final_verdict.ingredients)} claim URLs")
+        print(f"=========================================")
 
 
 

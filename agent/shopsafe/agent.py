@@ -48,6 +48,24 @@ async def run_safety_check_pass(user_text: str, critique: str | None = None) -> 
         session.critique = critique
 
     async def _run():
+        if os.environ.get("USE_GROQ") == "1":
+            from shopsafe.tools.search import search
+            from shopsafe.groq_client import call_groq_safety
+
+            print("\n[Using GROQ with mode llama-3.3-70b-versatile]")
+            # 1. Execute live Exa search under the active session
+            search_results = await search(user_text, None)
+
+            # 2. Invoke Groq
+            verdict = await call_groq_safety(user_text, search_results, critique)
+
+            # 3. Update session verdict
+            if critique:
+                session.pass2_verdict = verdict
+            else:
+                session.pass1_verdict = verdict
+            return verdict
+
         app_name = "shopsafe"
         user_id = "local_user"
         session_id = secrets.token_hex(8)
