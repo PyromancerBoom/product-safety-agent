@@ -51,13 +51,6 @@ async def call_groq_safety(
         }
       ]
     }
-  ],
-  "alternatives": [
-    {
-      "product_name": string,
-      "reason": string,
-      "source_url": string
-    }
   ]
 }
 """

@@ -10,7 +10,7 @@ import os
 from exa_py import Exa
 from google.adk.tools import ToolContext
 
-_NUM_RESULTS = 5
+_NUM_RESULTS = 3
 _SNIPPET_CHARS = 800
 
 

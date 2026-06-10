@@ -43,13 +43,6 @@ Your job is to analyze the safety of a product or a list of ingredients by searc
               }
             ]
           }
-        ],
-        "alternatives": [
-          {
-            "product_name": "Alternative Product Name",
-            "reason": "Why this is a safe, clean alternative.",
-            "source_url": "http://alternative-source-url.com"
-          }
         ]
       }
 """
