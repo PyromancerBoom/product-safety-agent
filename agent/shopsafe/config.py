@@ -22,6 +22,16 @@ class PipelineConfig(BaseModel):
     max_planned_queries: int
     num_results: int
     snippet_chars: int
+    audit_pass_threshold: float
+
+    def describe(self) -> str:
+        """One-line summary of the active provider/models for startup logging."""
+        if self.provider == "groq":
+            return f"provider=groq model={self.groq_model}"
+        return (
+            f"provider=gemini planner={self.planner_model} "
+            f"verdict={self.verdict_model} judge={self.judge_model}"
+        )
 
 
 @lru_cache(maxsize=1)
@@ -37,4 +47,5 @@ def get_config() -> PipelineConfig:
         max_planned_queries=int(os.environ.get("MAX_PLANNED_QUERIES", "3")),
         num_results=int(os.environ.get("EXA_NUM_RESULTS", "5")),
         snippet_chars=int(os.environ.get("EXA_SNIPPET_CHARS", "800")),
+        audit_pass_threshold=float(os.environ.get("AUDIT_PASS_THRESHOLD", "0.85")),
     )

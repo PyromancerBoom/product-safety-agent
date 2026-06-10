@@ -1,11 +1,8 @@
-
-
-"""One ADK turn; tracing via ``instrumentation.setup_tracing``."""
+"""One-shot ShopSafe pipeline run with Phoenix tracing."""
 
 from __future__ import annotations
 
 import asyncio
-import secrets
 import sys
 from pathlib import Path
 
@@ -13,87 +10,78 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from google.adk.runners import InMemoryRunner
-from google.genai import types
+from instrumentation import setup_tracing  # noqa: E402
 
-from instrumentation import setup_tracing
-from shopsafe.agent import root_agent
-from shopsafe.models import SafetyVerdict
+setup_tracing()
+
+from shopsafe.pipeline import run_pipeline  # noqa: E402
+
+
+def _banner(msg: str) -> None:
+    print(f"\n{'=' * 45}")
+    print(f"  {msg}")
+    print(f"{'=' * 45}")
 
 
 async def run_turn(user_text: str) -> None:
-    setup_tracing()
-    
-    from shopsafe import (
-        AgentSessionState,
-        session_scope,
-        run_safety_check_pass,
-        run_groundedness_audit,
-    )
+    from shopsafe.config import get_config
 
-    session = AgentSessionState(user_query=user_text)
-    
-    async with session_scope(session):
-        print(f"\n=========================================")
-        print(f"[PASS 1] STARTING SAFETY CHECK FOR: '{user_text}'")
-        print(f"=========================================")
-        try:
-            pass1_verdict = await run_safety_check_pass(user_text)
-            print("\n--- Pass 1 Verdict Generated ---")
-            print(f"Overall Verdict: {pass1_verdict.overall_verdict.upper()}")
-            print(f"Reason: {pass1_verdict.overall_reason}")
-            for ing in pass1_verdict.ingredients:
-                print(f"  - {ing.name}: {ing.verdict.upper()} ({ing.reason})")
-        except Exception as e:
-            print(f"\n[Pass 1 Error] {e}")
-            return
+    _banner(f"CONFIG  {get_config().describe()}")
+    result = await run_pipeline(user_text, on_stage=_banner)
 
-        print(f"\n=========================================")
-        print(f"[AUDIT] STARTING GROUNDEDNESS & COMPLIANCE INSPECTOR")
-        print(f"=========================================")
-        try:
-            audit = await run_groundedness_audit()
-            print(f"Groundedness Score: {audit.groundedness_score:.2f}/1.00")
-            print(f"Authority Score:    {audit.authority_score:.2f}/1.00")
-            print(f"Tone Safety Score:  {audit.tone_safety_score:.2f}/1.00")
-            print(f"Status:             {'APPROVED' if audit.is_approved else 'REJECTED'}")
-        except Exception as e:
-            print(f"\n[Audit Error] {e}")
-            return
+    # ── Plan summary ──────────────────────────────────────────
+    for i, plan in enumerate(result.plans, start=1):
+        _banner(f"PASS {i} PLAN")
+        print(f"Product:     {plan.product_name}")
+        if plan.user_context:
+            print(f"User ctx:    {plan.user_context}")
+        print(f"Ingredients: {', '.join(plan.ingredients_to_check)}")
+        print(f"Queries ({len(plan.queries)}):")
+        for pq in plan.queries:
+            domains = f" [{', '.join(pq.include_domains)}]" if pq.include_domains else ""
+            print(f"  • {pq.query}{domains}")
+            print(f"    ↳ {pq.purpose}")
 
-        final_verdict = pass1_verdict
+    # ── Audit scores per pass ─────────────────────────────────
+    for i, audit in enumerate(result.audits, start=1):
+        _banner(f"PASS {i} AUDIT")
+        print(f"Groundedness:  {audit.groundedness_score:.2f}/1.00")
+        print(f"Authority:     {audit.authority_score:.2f}/1.00")
+        print(f"Tone Safety:   {audit.tone_safety_score:.2f}/1.00")
+        status = "APPROVED" if audit.is_approved else "REJECTED"
+        print(f"Status:        {status}")
+        if audit.critique:
+            print(f"\nCritique:\n{audit.critique}")
 
-        if not audit.is_approved and audit.critique:
-            print(f"\n=========================================")
-            print(f"[CRITIQUE] REFINEMENT INSTRUCTIONS RECEIVED")
-            print(f"=========================================")
-            print(audit.critique)
-
-            print(f"\n=========================================")
-            print(f"[PASS 2] STARTING REFINED SEARCH & FIX")
-            print(f"=========================================")
-            try:
-                pass2_verdict = await run_safety_check_pass(user_text, critique=audit.critique)
-                print("\n--- Pass 2 (Final) Verdict Generated ---")
-                print(f"Overall Verdict: {pass2_verdict.overall_verdict.upper()}")
-                print(f"Reason: {pass2_verdict.overall_reason}")
-                for ing in pass2_verdict.ingredients:
-                    print(f"  - {ing.name}: {ing.verdict.upper()} ({ing.reason})")
-                final_verdict = pass2_verdict
-            except Exception as e:
-                print(f"\n[Pass 2 Error] {e}")
-                print("Falling back to Pass 1 verdict.")
-
-        print(f"\n=========================================")
-        print(f"[REPORT] FINAL SAFETY REPORT")
-        print(f"=========================================")
-        print(f"Product:        {final_verdict.product_name}")
-        print(f"Overall Rating: {final_verdict.overall_verdict.upper()}")
-        print(f"Summary Reason: {final_verdict.overall_reason}")
-        print(f"Citations Found: {sum(len(ing.claims) for ing in final_verdict.ingredients)} claim URLs")
-        print(f"=========================================")
-
-
+    # ── Final report ──────────────────────────────────────────
+    v = result.final_verdict
+    _banner("FINAL SAFETY REPORT")
+    print(f"Product:        {v.product_name}")
+    print(f"Overall Rating: {v.overall_verdict.upper()}")
+    print(f"Summary:        {v.overall_reason}")
+    if v.user_context_notes:
+        print(f"User Context:   {v.user_context_notes}")
+    print(f"Passes used:    {result.passes_used}")
+    a = result.final_audit
+    if a is not None:
+        if result.approved:
+            print(f"Audit:          PASSED (mean {a.mean_score:.2f})")
+        else:
+            print(
+                f"Audit:          NOT PASSED — best-effort verdict "
+                f"(mean {a.mean_score:.2f}, weakest {a.min_score:.2f}). Treat with extra caution."
+            )
+    print()
+    for ing in v.ingredients:
+        print(f"  [{ing.verdict.upper()}] {ing.name}")
+        print(f"         {ing.reason}")
+        for claim in ing.claims:
+            print(f"         • {claim.text}")
+            print(f"           {claim.url}")
+    total_claims = sum(len(ing.claims) for ing in v.ingredients)
+    print(f"\nCitations found: {total_claims}")
+    print("=" * 45)
+    print("\n>>> Check the Phoenix UI for the full trace tree.")
 
 
 def main() -> None:

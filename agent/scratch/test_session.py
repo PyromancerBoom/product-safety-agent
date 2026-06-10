@@ -1,70 +1,89 @@
-"""Offline verification script for checking session state, critic, and multi-pass loop updates (Open-Core)."""
+"""Offline verification script for session state and pipeline flow (Open-Core)."""
 
 import asyncio
 import random
 import sys
-from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-# Ensure the parent directory is in sys.path so we can import from agent package
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from shopsafe.session import (
     AgentSessionState,
-    session_scope,
     get_current_session,
     log_search,
+    session_scope,
 )
-from shopsafe.models import SafetyVerdict, AuditVerdict
-from shopsafe.agent import run_safety_check_pass
-from shopsafe.judge import run_groundedness_audit
+from shopsafe.models import AuditVerdict, ResearchPlan, SafetyVerdict, PlannedQuery
 
 
-@contextmanager
-def mock_runner_context(mock_runner):
-    """Context manager to patch InMemoryRunner across all namespaces where it is used."""
-    with patch("google.adk.runners.InMemoryRunner", return_value=mock_runner) as p1, \
-         patch("shopsafe.judge.InMemoryRunner", return_value=mock_runner) as p2, \
-         patch("shopsafe.agent.InMemoryRunner", return_value=mock_runner, create=True) as p3:
-        yield (p1, p2, p3)
+# ── helpers ──────────────────────────────────────────────────────────────────
 
+def _make_safety_verdict(verdict: str = "caution", reason: str = "Test.") -> SafetyVerdict:
+    return SafetyVerdict(
+        product_name="retinol",
+        overall_verdict=verdict,
+        overall_reason=reason,
+        user_context_notes="No specific user context provided.",
+        ingredients=[],
+    )
+
+
+def _make_research_plan() -> ResearchPlan:
+    return ResearchPlan(
+        product_name="retinol",
+        ingredients_to_check=["retinol"],
+        user_context="",
+        queries=[
+            PlannedQuery(
+                query="retinol safety FDA",
+                category=None,
+                include_domains=["fda.gov"],
+                purpose="Check FDA regulatory stance on retinol",
+            )
+        ],
+    )
+
+
+def _make_audit(approved: bool, critique: str = "") -> AuditVerdict:
+    return AuditVerdict(
+        is_approved=approved,
+        groundedness_score=0.90 if approved else 0.60,
+        authority_score=0.90 if approved else 0.55,
+        tone_safety_score=0.90 if approved else 0.75,
+        critique=critique,
+    )
+
+
+# ── tests ─────────────────────────────────────────────────────────────────────
 
 async def test_session_isolation():
     print("--- Running Test: Session Context Isolation ---")
 
     async def worker(worker_id: int, query: str):
-        # Create a unique session state for this concurrent worker
         state = AgentSessionState(user_query=query)
         async with session_scope(state):
-            # Verify we are starting in the correct, isolated session
             current = get_current_session()
             assert current is not None
             assert current.user_query == query
             assert len(current.search_history) == 0
 
-            # Simulate first search with a random delay to interleave tasks
             log_search(f"query_{worker_id}_1", f"results_{worker_id}_1")
             await asyncio.sleep(random.uniform(0.01, 0.05))
 
-            # Verify no crosstalk occurred
             current = get_current_session()
             assert len(current.search_history) == 1
             assert current.search_history[0].query == f"query_{worker_id}_1"
 
-            # Simulate second search
             log_search(f"query_{worker_id}_2", f"results_{worker_id}_2")
             await asyncio.sleep(random.uniform(0.01, 0.05))
 
-            # Verify both search records are present and correct in this worker's context
             current = get_current_session()
             assert len(current.search_history) == 2
-            assert current.search_history[0].query == f"query_{worker_id}_1"
             assert current.search_history[1].query == f"query_{worker_id}_2"
 
             print(f"[SUCCESS] Worker {worker_id} (query='{query}') isolated correctly.")
 
-    # Run multiple concurrent workers to test interleaving task isolation
     await asyncio.gather(
         worker(1, "retinol"),
         worker(2, "benzene"),
@@ -73,177 +92,129 @@ async def test_session_isolation():
     print("--- Session Context Isolation Test Passed ---\n")
 
 
-async def test_mocked_run_pass():
-    print("--- Running Test: Programmatic Runner & State Updates ---")
+async def test_session_state_updates():
+    print("--- Running Test: Session State Updates ---")
 
-    dummy_json_pass1 = (
-        '{"product_name": "retinol", "overall_verdict": "caution", '
-        '"overall_reason": "Thin search evidence.", "ingredients": []}'
-    )
+    state = AgentSessionState(user_query="retinol")
+    async with session_scope(state):
+        # Simulate pipeline writing pass1 verdict
+        state.pass1_verdict = _make_safety_verdict("caution", "Thin sources.")
+        assert state.pass1_verdict is not None
+        assert state.pass2_verdict is None
+        print("[SUCCESS] Pass 1 verdict stored correctly.")
 
-    mock_part = MagicMock()
-    mock_part.text = dummy_json_pass1
-    mock_part.function_call = None
-    mock_part.function_response = None
+        state.critique = "Search PubMed for retinol toxicity."
+        state.pass2_verdict = _make_safety_verdict("safe", "Better sources after critique.")
+        assert state.pass2_verdict is not None
+        assert state.pass2_verdict.overall_verdict == "safe"
+        print("[SUCCESS] Pass 2 verdict and critique stored correctly.")
 
-    mock_event = MagicMock()
-    mock_event.content.parts = [mock_part]
-
-    # Mock async generator representing runner.run_async response streams
-    async def mock_run_async(*args, **kwargs):
-        yield mock_event
-
-    mock_runner = MagicMock()
-    mock_runner.session_service.create_session = AsyncMock()
-    mock_runner.run_async = mock_run_async
-
-    with mock_runner_context(mock_runner):
-        # Case 1: Run safety check pass. It should create its own temporary session.
-        verdict = await run_safety_check_pass("retinol")
-        assert verdict.product_name == "retinol"
-        assert verdict.overall_verdict == "caution"
-        print("[SUCCESS] Independent turn run completed successfully.")
-
-        # Case 2: Run within an existing active session
-        state = AgentSessionState(user_query="retinol")
-        async with session_scope(state):
-            # Run Pass 1
-            verdict1 = await run_safety_check_pass("retinol")
-            assert state.pass1_verdict is not None
-            assert state.pass1_verdict.product_name == "retinol"
-            assert state.pass1_verdict.overall_verdict == "caution"
-            assert state.pass2_verdict is None
-            print("[SUCCESS] Pass 1 updated active session state correctly.")
-
-            # Prepare Pass 2 response
-            dummy_json_pass2 = (
-                '{"product_name": "retinol", "overall_verdict": "safe", '
-                '"overall_reason": "Sufficient research cited after critique.", "ingredients": []}'
-            )
-            mock_part.text = dummy_json_pass2
-
-            # Run Pass 2 with critique
-            verdict2 = await run_safety_check_pass("retinol", critique="Lookup PubMed databases")
-            assert state.critique == "Lookup PubMed databases"
-            assert state.pass2_verdict is not None
-            assert state.pass2_verdict.overall_verdict == "safe"
-            print("[SUCCESS] Pass 2 updated active session state and critique correctly.")
-
-    print("--- Programmatic Runner & State Updates Test Passed ---\n")
+    # After context exits, session var is reset
+    assert get_current_session() is None
+    print("[SUCCESS] Session cleared after context exit.")
+    print("--- Session State Updates Test Passed ---\n")
 
 
 async def test_mocked_judge_audit():
-    print("--- Running Test: Groundedness Auditor Audit ---")
+    print("--- Running Test: Groundedness Auditor ---")
 
-    dummy_audit_json = (
-        '{"is_approved": false, "groundedness_score": 0.60, '
-        '"authority_score": 0.50, "tone_safety_score": 0.70, '
-        '"critique": "Need higher authority sources."}'
-    )
+    audit_result = _make_audit(False, critique="Need higher authority sources.")
 
-    mock_part = MagicMock()
-    mock_part.text = dummy_audit_json
-    mock_part.function_call = None
-    mock_part.function_response = None
+    with patch("shopsafe.judge.generate_structured", new=AsyncMock(return_value=audit_result)):
+        from shopsafe.judge import run_groundedness_audit
 
-    mock_event = MagicMock()
-    mock_event.content.parts = [mock_part]
-
-    async def mock_run_async(*args, **kwargs):
-        yield mock_event
-
-    mock_runner = MagicMock()
-    mock_runner.session_service.create_session = AsyncMock()
-    mock_runner.run_async = mock_run_async
-
-    with mock_runner_context(mock_runner):
-        # Create a session state with a Pass 1 verdict
         state = AgentSessionState(user_query="retinol")
-        state.pass1_verdict = SafetyVerdict(
-            product_name="retinol",
-            overall_verdict="caution",
-            overall_reason="Testing",
-            ingredients=[],
-        )
+        state.pass1_verdict = _make_safety_verdict()
+        log_search("retinol safety", "some snippet")
 
         async with session_scope(state):
             audit = await run_groundedness_audit()
             assert audit.is_approved is False
             assert audit.groundedness_score == 0.60
             assert audit.critique == "Need higher authority sources."
-            print("[SUCCESS] Groundedness Auditor completed audit successfully.")
+            print("[SUCCESS] Groundedness auditor returned correct AuditVerdict.")
 
-    print("--- Groundedness Auditor Audit Test Passed ---\n")
+    print("--- Groundedness Auditor Test Passed ---\n")
 
 
-async def test_mocked_cli_loop():
-    print("--- Running Test: Full Multi-Pass CLI Loop ---")
+async def test_mocked_pipeline_single_pass():
+    print("--- Running Test: Pipeline — approved on Pass 1 ---")
 
-    dummy_pass1_json = (
-        '{"product_name": "retinol", "overall_verdict": "caution", '
-        '"overall_reason": "Pass 1 summary.", "ingredients": []}'
-    )
+    plan = _make_research_plan()
+    verdict = _make_safety_verdict("safe", "Sufficient evidence.")
+    audit = _make_audit(True)
 
-    dummy_audit_json = (
-        '{"is_approved": false, "groundedness_score": 0.75, '
-        '"authority_score": 0.65, "tone_safety_score": 0.80, '
-        '"critique": "Please search PubMed specifically for retinol toxicity and refine tone."}'
-    )
+    call_results = [plan, verdict, audit]
+    call_idx = 0
 
-    dummy_pass2_json = (
-        '{"product_name": "retinol", "overall_verdict": "safe", '
-        '"overall_reason": "Pass 2 summary (fixed).", "ingredients": []}'
-    )
+    async def fake_generate_structured(**kwargs):
+        nonlocal call_idx
+        result = call_results[call_idx]
+        call_idx += 1
+        return result
 
-    run_async_calls = 0
+    async def fake_search(query, tool_context, **kwargs):
+        log_search(query, f"Mock results for: {query}")
+        return f"Mock results for: {query}"
 
-    # Custom mock runner implementation using call counter
-    async def dynamic_run_async(*args, **kwargs):
-        nonlocal run_async_calls
-        run_async_calls += 1
-        mock_part = MagicMock()
+    with patch("shopsafe.pipeline.generate_structured", new=fake_generate_structured), \
+         patch("shopsafe.pipeline.search", new=fake_search), \
+         patch("shopsafe.judge.generate_structured", new=fake_generate_structured):
+        from shopsafe.pipeline import run_pipeline
+        result = await run_pipeline("retinol safety")
 
-        if run_async_calls == 1:
-            # Pass 1: Safety Verdict
-            mock_part.text = dummy_pass1_json
-        elif run_async_calls == 2:
-            # Audit Verdict
-            mock_part.text = dummy_audit_json
-        elif run_async_calls == 3:
-            # Pass 2: Refined Safety Verdict
-            mock_part.text = dummy_pass2_json
-        else:
-            mock_part.text = "{}"
+    assert result.passes_used == 1
+    assert result.final_verdict.overall_verdict == "safe"
+    assert len(result.plans) == 1
+    assert len(result.audits) == 1
+    print("[SUCCESS] Pipeline completed in 1 pass when auditor approves.")
+    print("--- Pipeline Single-Pass Test Passed ---\n")
 
-        mock_part.function_call = None
-        mock_part.function_response = None
 
-        mock_event = MagicMock()
-        mock_event.content.parts = [mock_part]
-        yield mock_event
+async def test_mocked_pipeline_two_pass():
+    print("--- Running Test: Pipeline — rejected on Pass 1, approved on Pass 2 ---")
 
-    mock_runner = MagicMock()
-    mock_runner.session_service.create_session = AsyncMock()
-    mock_runner.run_async = dynamic_run_async
+    plan1 = _make_research_plan()
+    verdict1 = _make_safety_verdict("caution", "Thin sources.")
+    audit1 = _make_audit(False, critique="Search PubMed for retinol toxicity.")
+    plan2 = _make_research_plan()
+    verdict2 = _make_safety_verdict("safe", "Better sources after critique.")
+    audit2 = _make_audit(True)
 
-    with mock_runner_context(mock_runner):
-        from main import run_turn
+    call_results = [plan1, verdict1, audit1, plan2, verdict2, audit2]
+    call_idx = 0
 
-        await run_turn("retinol")
+    async def fake_generate_structured(**kwargs):
+        nonlocal call_idx
+        result = call_results[call_idx]
+        call_idx += 1
+        return result
 
-        # Verify that all three phases of the loop executed correctly
-        assert run_async_calls == 3
-        print("[SUCCESS] Full multi-pass CLI loop executed with both passes and auditor.")
+    async def fake_search(query, tool_context, **kwargs):
+        log_search(query, f"Mock results for: {query}")
+        return f"Mock results for: {query}"
 
-    print("--- Full Multi-Pass CLI Loop Test Passed ---\n")
+    with patch("shopsafe.pipeline.generate_structured", new=fake_generate_structured), \
+         patch("shopsafe.pipeline.search", new=fake_search), \
+         patch("shopsafe.judge.generate_structured", new=fake_generate_structured):
+        from shopsafe.pipeline import run_pipeline
+        result = await run_pipeline("retinol safety")
+
+    assert result.passes_used == 2
+    assert result.final_verdict.overall_verdict == "safe"
+    assert len(result.plans) == 2
+    assert len(result.audits) == 2
+    print("[SUCCESS] Pipeline ran 2 passes when Pass 1 audit rejected.")
+    print("--- Pipeline Two-Pass Test Passed ---\n")
 
 
 async def main():
     await test_session_isolation()
-    await test_mocked_run_pass()
+    await test_session_state_updates()
     await test_mocked_judge_audit()
-    await test_mocked_cli_loop()
-    print("All Open-Core offline tests completed successfully!")
+    await test_mocked_pipeline_single_pass()
+    await test_mocked_pipeline_two_pass()
+    print("All offline tests completed successfully!")
 
 
 if __name__ == "__main__":

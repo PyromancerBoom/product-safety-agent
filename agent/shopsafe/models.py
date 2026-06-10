@@ -1,16 +1,55 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, get_args
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# The only categories Exa accepts. Anything else makes exa_py raise a hard
+# ValueError that crashes the pipeline, so this list is the single source of truth.
+ExaCategory = Literal[
+    "company",
+    "research paper",
+    "news",
+    "pdf",
+    "personal site",
+    "financial report",
+    "people",
+]
+VALID_EXA_CATEGORIES: frozenset[str] = frozenset(get_args(ExaCategory))
+
+
+def normalize_exa_category(value: object) -> Optional[str]:
+    """Coerce an arbitrary category value to a valid Exa category, or None.
+
+    The planner LLM sometimes invents categories Exa does not support (e.g.
+    'guideline', 'regulatory'). Rather than let that crash the search, we drop
+    anything off-list to None — the query then runs as a normal web search.
+    Matching is case-insensitive so 'News' or 'Research Paper' still resolve.
+    """
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip().lower()
+    return cleaned if cleaned in VALID_EXA_CATEGORIES else None
 
 
 class PlannedQuery(BaseModel):
     query: str = Field(description="The search query string to send to Exa.")
-    category: Optional[str] = Field(
+    category: Optional[ExaCategory] = Field(
         default=None,
-        description="Optional Exa result category, e.g. 'research paper' or 'news'.",
+        description=(
+            "Optional Exa result category. MUST be exactly one of: 'company', "
+            "'research paper', 'news', 'pdf', 'personal site', 'financial report', "
+            "'people'. Omit entirely if none apply — never invent a category."
+        ),
     )
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _coerce_category(cls, v: object) -> Optional[str]:
+        # Runs before the Literal check, so an off-list value becomes None
+        # instead of raising — protects the Groq path, which has no native
+        # schema enforcement.
+        return normalize_exa_category(v)
     include_domains: Optional[List[str]] = Field(
         default=None,
         description="Optional list of authoritative domains to restrict results to, e.g. ['fda.gov', 'nih.gov'].",
@@ -86,3 +125,21 @@ class AuditVerdict(BaseModel):
     critique: str = Field(
         description="Detailed critique listing weaknesses and specific instructions for refinement. Empty string if approved."
     )
+
+    @property
+    def _scores(self) -> tuple[float, float, float]:
+        return (self.groundedness_score, self.authority_score, self.tone_safety_score)
+
+    @property
+    def mean_score(self) -> float:
+        """Average of the three audit dimensions — used to rank verdicts across passes."""
+        return sum(self._scores) / 3
+
+    @property
+    def min_score(self) -> float:
+        """Weakest dimension — the gate, so every dimension must clear the bar."""
+        return min(self._scores)
+
+    def meets(self, threshold: float) -> bool:
+        """True when all three scores clear `threshold` (the deterministic pass rule)."""
+        return self.min_score >= threshold

@@ -1,5 +1,3 @@
-
-
 """Live web search via Exa, exposed as an ADK FunctionTool."""
 
 from __future__ import annotations
@@ -10,21 +8,23 @@ import os
 from exa_py import Exa
 from google.adk.tools import ToolContext
 
-_NUM_RESULTS = 3
-_SNIPPET_CHARS = 800
 
-
-def _format_results(results) -> str:
+def _format_results(results, snippet_chars: int) -> str:
     blocks = []
     for i, r in enumerate(results, start=1):
-        text = (getattr(r, "text", "") or "").strip().replace("\n", " ")
-        if len(text) > _SNIPPET_CHARS:
-            text = text[:_SNIPPET_CHARS] + "..."
+        # Prefer highlights (more focused) over raw text truncation
+        highlights = getattr(r, "highlights", None) or []
+        if highlights:
+            snippet = " ... ".join(h.strip() for h in highlights if h)
+        else:
+            text = (getattr(r, "text", "") or "").strip().replace("\n", " ")
+            snippet = text[:snippet_chars] + "..." if len(text) > snippet_chars else text
+
         blocks.append(
             f"[{i}] {getattr(r, 'title', '') or '(untitled)'}\n"
             f"URL: {getattr(r, 'url', '') or '(no url)'}\n"
             f"Published: {getattr(r, 'published_date', None) or 'unknown'}\n"
-            f"Snippet: {text or '(no text extracted)'}"
+            f"Snippet: {snippet or '(no text extracted)'}"
         )
     return "\n\n".join(blocks) if blocks else "No results found."
 
@@ -40,15 +40,23 @@ async def search(
 
     Args:
       query: A natural-language search query.
-      tool_context: ADK tool context.
-      include_domains: Optional list of authoritative domains to search (e.g. ['fda.gov']).
+      tool_context: ADK tool context (pass None when calling from the pipeline).
+      include_domains: Optional list of authoritative domains to restrict results to.
       exclude_domains: Optional list of domains to filter out.
-      category: Optional category of results (e.g. 'news', 'research paper').
+      category: Optional Exa category, e.g. 'research paper' or 'news'.
 
     Returns:
-      Up to five results, each with title, source URL, publish date, and a text
-      snippet. Cite the URL for any claim drawn from a result.
+      Up to N results, each with title, source URL, publish date, and a text snippet.
+      Cite the URL for any claim drawn from a result.
     """
+    from shopsafe.config import get_config
+    from shopsafe.models import normalize_exa_category
+    cfg = get_config()
+
+    # Belt-and-suspenders: drop any category Exa would reject (the pipeline
+    # already normalizes, but this tool is also callable directly via ADK).
+    category = normalize_exa_category(category)
+
     api_key = (os.environ.get("EXA_API_KEY") or "").strip()
     if not api_key:
         return "Search unavailable: EXA_API_KEY is not set in the environment."
@@ -58,14 +66,15 @@ async def search(
         exa.search_and_contents,
         query,
         type="auto",
-        num_results=_NUM_RESULTS,
+        num_results=cfg.num_results,
         text=True,
-        include_domains=include_domains,
-        exclude_domains=exclude_domains,
+        highlights=True,
+        # Pass None rather than [] for unused domain filters (Exa quirk)
+        include_domains=include_domains or None,
+        exclude_domains=exclude_domains or None,
         category=category,
     )
-    results_str = _format_results(getattr(response, "results", []) or [])
+    results_str = _format_results(getattr(response, "results", []) or [], cfg.snippet_chars)
     from shopsafe.session import log_search
     log_search(query, results_str)
     return results_str
-
