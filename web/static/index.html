@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ShopSafe — Consumer Safety Verification Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="paper-grain" aria-hidden="true"></div>
+
+  <!-- ── Masthead ─────────────────────────────────────────── -->
+  <header class="masthead">
+    <div class="masthead-rule">
+      <span class="rule-item">CONSUMER SAFETY VERIFICATION ENGINE</span>
+      <span class="rule-item" id="case-no">CASE Nº ————</span>
+      <span class="rule-item" id="case-date"></span>
+    </div>
+    <h1 class="brand">
+      Shop<span class="brand-accent">Safe</span><span class="brand-mark">®</span>
+    </h1>
+    <p class="tagline">
+      Every claim carries its source. Thin evidence earns <em>caution</em>, never invented certainty.
+    </p>
+  </header>
+
+  <!-- ── Intake form ──────────────────────────────────────── -->
+  <section class="intake">
+    <form id="intake-form" autocomplete="off">
+      <label class="intake-label" for="query">Subject of inquiry</label>
+      <div class="intake-row">
+        <input
+          id="query"
+          name="query"
+          type="text"
+          placeholder='e.g. "Planning to buy ON whey protein gold standard. im 12 btw"'
+          required
+        />
+        <button type="submit" id="run-btn">
+          <span class="btn-label">Run verification</span>
+          <span class="btn-arrow">→</span>
+        </button>
+      </div>
+    </form>
+    <div class="samples" id="samples">
+      <span class="samples-label">Try:</span>
+      <button class="sample" data-q="retinol serum, 8 weeks pregnant">retinol serum, 8 weeks pregnant</button>
+      <button class="sample" data-q="Planning to buy ON whey protein gold standard. im 12 btw">whey protein · age 12</button>
+      <button class="sample" data-q="spray sunscreen benzene recall valisure">benzene sunscreen recall</button>
+      <button class="sample" data-q="organic extra virgin olive oil for cooking">plain olive oil</button>
+    </div>
+    <div class="config-line" id="config-line"></div>
+  </section>
+
+  <!-- ── Live pipeline ────────────────────────────────────── -->
+  <main id="pipeline" class="pipeline" hidden>
+    <div class="pipeline-head">
+      <h2 class="section-title">Verification proceedings</h2>
+      <div class="live-dot" id="live-dot"><span></span>LIVE</div>
+    </div>
+    <div id="passes"></div>
+  </main>
+
+  <!-- ── Final report ─────────────────────────────────────── -->
+  <section id="report" class="report" hidden></section>
+
+  <footer class="footer">
+    <span>ShopSafe — open-core verification engine</span>
+    <span class="footer-sep">·</span>
+    <span>Planner → parallel research → sourced verdict → audit → refinement</span>
+    <span class="footer-sep">·</span>
+    <span>traced with Arize Phoenix</span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

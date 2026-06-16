@@ -3821,24 +3821,28 @@ source = { editable = "." }
 dependencies = [
     { name = "arize-phoenix" },
     { name = "exa-py" },
+    { name = "fastapi" },
     { name = "google-adk" },
     { name = "google-genai" },
     { name = "openinference-instrumentation-google-adk" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
     { name = "python-dotenv" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "arize-phoenix", specifier = ">=7.0" },
     { name = "exa-py", specifier = ">=1.0" },
+    { name = "fastapi", specifier = ">=0.111.0" },
     { name = "google-adk", specifier = ">=1.32.0" },
     { name = "google-genai", specifier = ">=1.9.0" },
     { name = "openinference-instrumentation-google-adk", specifier = ">=0.1.11" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.27.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.27.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
+    { name = "uvicorn", specifier = ">=0.30.0" },
 ]
 
 [[package]]

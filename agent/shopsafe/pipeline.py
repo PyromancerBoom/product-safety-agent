@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from shopsafe.config import get_config
 from shopsafe.llm import generate_structured
 from shopsafe.models import AuditVerdict, ResearchPlan, SafetyVerdict
-from shopsafe.prompt import shopsafe_planner_instruction, shopsafe_verdict_instruction
+from shopsafe.prompt import load_playbook, shopsafe_planner_instruction, shopsafe_verdict_instruction
 from shopsafe.session import AgentSessionState, session_scope
 from shopsafe.tools.search import search
 
@@ -73,24 +73,44 @@ async def _plan_research(
             f"User Query: {user_text}\n\n"
             f"Emit {cfg.max_planned_queries} targeted search queries."
         )
+    
+    instruction = shopsafe_planner_instruction
+    pb = load_playbook()
+    if pb:
+        instruction += f"\n\n## Learned playbook (from past low-scoring runs)\n{pb}"
+
     return await generate_structured(
         agent_name="shopsafe_planner",
-        instruction=shopsafe_planner_instruction,
+        instruction=instruction,
         user_content=content,
         schema=ResearchPlan,
         model=get_config().planner_model,
     )
 
 
-async def _execute_research(plan: ResearchPlan) -> str:
+async def _execute_research(
+    plan: ResearchPlan,
+    *,
+    emit: Callable[[str, dict], None] | None = None,
+    pass_num: int = 1,
+) -> str:
     """Run all planned queries in parallel and join into one evidence-pool string."""
     async def _one(pq) -> str:
-        return await search(
+        result = await search(
             pq.query,
             None,
             include_domains=pq.include_domains or None,
             category=pq.category,
         )
+        if emit:
+            # One "URL:" line per formatted result block — cheap source count for the UI.
+            emit("search_done", {
+                "pass": pass_num,
+                "query": pq.query,
+                "purpose": pq.purpose,
+                "sources": result.count("URL: "),
+            })
+        return result
 
     results = await asyncio.gather(*[_one(pq) for pq in plan.queries])
 
@@ -131,12 +151,55 @@ async def _write_verdict(
     )
 
 
+def _annotate_audit(span, audit, pass_num: int) -> None:
+    """Attach the three audit scores as attributes and Phoenix annotations to the active span."""
+    if not span or not hasattr(span, "is_recording") or not span.is_recording():
+        return
+        
+    try:
+        span.set_attributes({
+            "shopsafe.audit.groundedness": audit.groundedness_score,
+            "shopsafe.audit.authority": audit.authority_score,
+            "shopsafe.audit.tone_safety": audit.tone_safety_score,
+            "shopsafe.audit.mean": audit.mean_score,
+            "shopsafe.audit.pass": pass_num,
+            "shopsafe.audit.approved": audit.is_approved,
+        })
+    except Exception as e:
+        print(f"Warning: Failed to set OTEL span attributes: {e}")
+
+    try:
+        from phoenix.client import Client
+        px_client = Client()
+        span_id_hex = format(span.get_span_context().span_id, "016x")
+
+        for name, score in (
+            ("shopsafe.audit.groundedness", audit.groundedness_score),
+            ("shopsafe.audit.authority", audit.authority_score),
+            ("shopsafe.audit.tone_safety", audit.tone_safety_score),
+        ):
+            px_client.spans.add_span_annotation(
+                span_id=span_id_hex,
+                annotation_name=name,
+                annotator_kind="LLM",
+                score=score,
+            )
+    except Exception:
+        pass
+
+
 async def run_pipeline(
     user_text: str,
     *,
     on_stage: Optional[Callable[[str], None]] = None,
+    on_event: Optional[Callable[[str, dict], None]] = None,
 ) -> PipelineResult:
-    """Run the full ShopSafe pipeline and return a PipelineResult."""
+    """Run the full ShopSafe pipeline and return a PipelineResult.
+
+    `on_stage` receives human-readable banner strings (CLI use).
+    `on_event` receives structured (kind, payload) events (web UI / SSE use).
+    Both are optional and failure-isolated — a broken callback never kills a run.
+    """
     from shopsafe.judge import run_groundedness_audit
 
     cfg = get_config()
@@ -144,6 +207,13 @@ async def run_pipeline(
     def _stage(msg: str) -> None:
         if on_stage:
             on_stage(msg)
+
+    def _emit(kind: str, payload: dict) -> None:
+        if on_event:
+            try:
+                on_event(kind, payload)
+            except Exception:
+                pass
 
     session = AgentSessionState(user_query=user_text)
     plans: list[ResearchPlan] = []
@@ -157,6 +227,7 @@ async def run_pipeline(
             critique = audits[-1].critique if audits else None
 
             _stage(f"[PASS {pass_num}] PLANNING")
+            _emit("stage", {"pass": pass_num, "stage": "planning", "critique": critique})
             plan = await _plan_research(
                 user_text,
                 critique=critique,
@@ -164,12 +235,15 @@ async def run_pipeline(
             )
             plans.append(plan)
             prior_queries.extend(pq.query for pq in plan.queries)
+            _emit("plan", {"pass": pass_num, **plan.model_dump()})
 
             _stage(f"[PASS {pass_num}] RESEARCHING ({len(plan.queries)} queries in parallel)")
-            new_evidence = await _execute_research(plan)
+            _emit("stage", {"pass": pass_num, "stage": "researching", "queries": len(plan.queries)})
+            new_evidence = await _execute_research(plan, emit=_emit, pass_num=pass_num)
             evidence_pool = (evidence_pool + "\n\n" + new_evidence).strip() if evidence_pool else new_evidence
 
             _stage(f"[PASS {pass_num}] WRITING VERDICT")
+            _emit("stage", {"pass": pass_num, "stage": "writing"})
             verdict = await _write_verdict(
                 user_text,
                 plan,
@@ -177,6 +251,7 @@ async def run_pipeline(
                 critique=critique,
             )
             verdict = _enforce_evidence_floor(verdict)
+            _emit("verdict", {"pass": pass_num, **verdict.model_dump()})
 
             if pass_num == 1:
                 session.pass1_verdict = verdict
@@ -184,9 +259,25 @@ async def run_pipeline(
                 session.pass2_verdict = verdict
 
             _stage(f"[PASS {pass_num}] AUDITING")
+            _emit("stage", {"pass": pass_num, "stage": "auditing"})
             audit = await run_groundedness_audit()
             audits.append(audit)
             candidates.append((verdict, audit))
+            _emit("audit", {
+                "pass": pass_num,
+                **audit.model_dump(),
+                "mean": audit.mean_score,
+                "passed": audit.meets(cfg.audit_pass_threshold),
+                "threshold": cfg.audit_pass_threshold,
+            })
+
+            # Annotate audit scores onto the span
+            from opentelemetry import trace as _otel_trace
+            try:
+                span = _otel_trace.get_current_span()
+                _annotate_audit(span, audit, pass_num)
+            except Exception:
+                pass
 
             # Deterministic gate: all dimensions must clear the threshold. We do
             # NOT trust audit.is_approved — the model frequently sets it false even

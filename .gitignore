@@ -16,3 +16,19 @@ agent/**/.adk/
 
 *.md
 !README.md
+!agent/shopsafe/playbook.md
+
+# Demo videos and media assets
+*.mp4
+*.mp3
+*.mov
+*.avi
+*.webm
+*.mkv
+*.gif
+
+# Ignore specific asset directories (optional, adjust to your folder structure)
+/demo/
+/assets/videos/
+/media/
+/demo_vid/

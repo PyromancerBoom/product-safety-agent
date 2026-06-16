@@ -100,3 +100,46 @@ If any score is below 0.85, or if there are any clear issues, set `is_approved` 
 
 Output a single valid AuditVerdict JSON object. No markdown, no commentary.
 """
+
+from pathlib import Path
+
+def load_playbook() -> str:
+    """Load the learned playbook markdown file relative to prompt.py.
+    
+    Returns:
+        The playbook content if found, else an empty string.
+    """
+    pb_path = Path(__file__).resolve().parent / "playbook.md"
+    try:
+        if pb_path.exists():
+            return pb_path.read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return ""
+
+
+IMPROVER_INSTRUCTION = """You are a Search and Query Strategy Optimizer for the ShopSafe Safety Agent.
+
+Your job is to analyze ShopSafe's own trace data from Phoenix and generate a concise markdown "playbook" of search-planning guidelines to correct past query failures.
+
+### TARGET FAILURE MODES:
+1. **Weak Authority Domains**: Traces where the auditor penalized authority scores because queries searched generic blogs instead of targeting fda.gov, nih.gov, clinicaltrials.gov, pubmed, or other official regulatory databases.
+2. **Thin / Missing Citations**: Spans where the verdict has caution ratings because the search queries were too generic and yielded no solid scientific/regulatory evidence.
+3. **Dropped User Context**: Runs where the planner didn't adjust queries for pregnancy, child age, or specific allergies mentioned in the query.
+4. **Alarmist Tone**: Spans where the verdict used diagnostic language ("X causes cancer") because queries were phrased in a leading or biased way.
+
+### INSTRUCTIONS:
+1. Call your Phoenix MCP tools to list recent traces or spans (project 'shopsafe').
+2. Locate runs with low audit scores (where mean score < 0.85 or approved is false).
+3. Cluster these runs to find recurring patterns of query failures.
+4. Generate a concise markdown playbook containing concrete search rules for the planner. 
+   - Write ONLY the markdown playbook.
+   - Do NOT include conversational filler, notes, or intros. Start directly with the markdown headers.
+   - Format:
+     # ShopSafe Query Planner Playbook
+     
+     ## Rule: [Description of Rule]
+     - Trigger: [When to use it]
+     - Instruction: [Specific search planning rule, e.g. 'Always append fda.gov or nih.gov to include_domains for active cosmetic ingredients. Use clean scientific terminology.']
+"""
+
