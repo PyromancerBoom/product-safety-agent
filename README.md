@@ -191,4 +191,15 @@ Everything is env-driven through `agent/shopsafe/config.py` (no scattered `os.en
 - **Deterministic where determinism wins.** Research execution, the audit gate, the evidence floor, and best-verdict selection are plain Python. LLMs only do the jobs that need judgment (planning, writing, scoring). Fewer failure modes, easier tests.
 - **One LLM wrapper, plug-and-play providers.** `generate_structured(schema=...)` is the only way any stage calls a model. Swapping Gemini and Groq is one env var; new providers are one function.
 - **Schema validators as guardrails.** The planner sometimes invents Exa categories that crash the API (`"guideline"`); a `field_validator` coerces off-list categories to `None` before they reach the search client.
-- **Open-core boundary.** This repo is the public verification engine. Recommendations, personalization, image input, and accumulated playbook *data* are deliberately out of scope; the playbook *mechanism* is public.
+
+## Future work
+
+Engine-level next steps, in rough priority order. The theme is the same one that runs through the whole project: **make the self-improvement loop trustworthy enough to leave running unattended.**
+
+- **A seatbelt on the improver.** Today the improver rewrites `playbook.md` and the next run trusts it blindly — but a bad rule degrades *every* future run. The fix: run the eval harness automatically after each improver pass and **auto-revert the playbook if audit scores drop.** That turns open-loop self-modification into self-improvement *with* a safety check.
+- **Versioned playbooks.** The improver currently overwrites `playbook.md` in place. Keeping dated versions would let the harness answer the real question — does learning *accumulate*, or just *oscillate* between failure modes run to run?
+- **Audit the improver's own output.** The pipeline's verdicts get judged; the improver's playbook edits don't. Scoring proposed rules before they land (clear / grounded / non-contradictory) applies the project's own "don't trust a model's unjudged output" principle to the learner itself.
+- **Per-run cost budget.** Live evals plus two refinement passes (3 queries each) plus judge calls add up. A token/cost counter on `PipelineResult` would make the quality-vs-spend trade-off visible and enforceable per run.
+- **More providers through the one wrapper.** `generate_structured(schema=...)` is the single seam every stage calls a model through, so adding a provider is one function and no pipeline changes — worth doing to de-risk any single vendor's rate limits.
+
+> This repo is the open-core verification *engine*. The product's commercial layer (label-photo input, personalized memory, alternative-product recommendations) lives in a separate private repo and is intentionally not part of this roadmap.
