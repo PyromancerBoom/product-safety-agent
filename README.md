@@ -1,5 +1,7 @@
 # ShopSafe
 
+> Built for the **Google Rapid Agents Hackathon**, starting from [Arize AI](https://arize.com/)'s ADK + Phoenix agent starter template.
+
 **A self-improving product-safety research agent.** Give it a buying intent in plain English, typos and context and all:
 
 > Example: *"Planning to buy ____ supplement. in ____ country"*
