@@ -14,10 +14,6 @@ dist/
 agent/**/.adk/
 .claude/
 
-*.md
-!README.md
-!agent/shopsafe/playbook.md
-
 # Demo videos and media assets
 *.mp4
 *.mp3

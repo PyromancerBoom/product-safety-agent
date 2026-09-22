@@ -18,4 +18,4 @@
 
 ## Rule: Target Specific Ingredient or Compound Information
 - Trigger: Queries about the safety or efficacy of a specific chemical compound, ingredient, or drug.
-- Instruction: Use precise scientific or chemical names. When searching for information on active ingredients in cosmetics or supplements, prioritize databases like FDA's VCRP (Voluntary Cosmetic Registration Program) if applicable, or general safety databases like PubChem and TOXNET (through NIH). Append `site:fda.gov OR site:nih.gov` for regulatory and scientific data.
+- Instruction: Use precise scientific or chemical names. For cosmetics and supplements, look for relevant FDA guidance, ingredient information in PubChem, and studies indexed by PubMed. A product listing is not evidence that an ingredient is safe. Append `site:fda.gov OR site:nih.gov` when you need U.S. regulatory or scientific sources.
